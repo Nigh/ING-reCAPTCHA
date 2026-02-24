@@ -1,0 +1,13 @@
+version: '3.8'
+
+services:
+  bot:
+    build: .
+    container_name: ing-recaptcha-bot
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - ./data:/data
+      - ./images:/images
+    environment:
+      - TZ=Asia/Shanghai
