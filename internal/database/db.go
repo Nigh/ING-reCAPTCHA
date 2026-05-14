@@ -3,6 +3,7 @@ package database
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 
 	_ "github.com/mattn/go-sqlite3"
 )
@@ -133,5 +134,17 @@ DELETE FROM pending_verifications WHERE CAST(expires_at AS TEXT) LIKE '%-%';
 	if err != nil {
 		return fmt.Errorf("failed to run migration: %w", err)
 	}
+
+	// Add question_count column if it doesn't exist (ALTER TABLE ADD COLUMN is not idempotent in SQLite)
+	if _, err := db.Exec("ALTER TABLE pending_verifications ADD COLUMN question_count INTEGER DEFAULT 3"); err != nil {
+		if !isDuplicateColumnError(err) {
+			return fmt.Errorf("failed to add question_count column: %w", err)
+		}
+	}
+
 	return nil
+}
+
+func isDuplicateColumnError(err error) bool {
+	return strings.Contains(err.Error(), "duplicate column name")
 }

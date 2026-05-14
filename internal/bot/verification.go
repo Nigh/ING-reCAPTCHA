@@ -1,6 +1,7 @@
 package bot
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"log"
@@ -15,6 +16,7 @@ import (
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 
+	"github.com/szres/ing-recaptcha/internal/ai"
 	"github.com/szres/ing-recaptcha/internal/database"
 )
 
@@ -55,14 +57,53 @@ func (b *Bot) startVerificationInternal(chatID, userID int64, user *tgbotapi.Use
 	// Note: No need to call DeletePendingVerification here
 	// CreatePendingVerification uses ON CONFLICT DO UPDATE to handle overwrites
 
+	// Determine question count via AI risk assessment or fallback to config
+	questionCount := b.cfg.VerifyImageCount
+	if b.ai.IsEnabled() {
+		aiCtx, aiCancel := context.WithTimeout(context.Background(), time.Duration(b.cfg.ModelTimeoutSeconds)*time.Second)
+		defer aiCancel()
+
+		userInfo := &ai.UserInfo{
+			UserID:       user.ID,
+			Username:     user.UserName,
+			FirstName:    user.FirstName,
+			LastName:     user.LastName,
+			LanguageCode: user.LanguageCode,
+			IsBot:        user.IsBot,
+		}
+
+		if count, err := b.ai.AssessRisk(aiCtx, userInfo); err != nil {
+			log.Printf("[WARN] AI risk assessment failed, using default count %d: %v", questionCount, err)
+		} else {
+			questionCount = count
+			log.Printf("[INFO] AI assessed risk for user %d, question count: %d", userID, questionCount)
+		}
+	}
+
 	// Check if we have enough image sets
 	setCount, err := b.db.GetImageSetCount()
 	if err != nil {
 		return fmt.Errorf("failed to get image set count: %w", err)
 	}
 
+	// Clamp questionCount to available sets
+	maxQuestions := setCount - b.cfg.VerifyDistractorCount
+	if maxQuestions < 3 {
+		maxQuestions = 3
+	}
+	if questionCount > maxQuestions {
+		log.Printf("[INFO] Clamping question count from %d to %d (max available)", questionCount, maxQuestions)
+		questionCount = maxQuestions
+	}
+	if questionCount > 7 {
+		questionCount = 7
+	}
+	if questionCount < 3 {
+		questionCount = 3
+	}
+
 	// We need: correct answers + distractors
-	minSets := b.cfg.VerifyImageCount + b.cfg.VerifyDistractorCount
+	minSets := questionCount + b.cfg.VerifyDistractorCount
 	log.Printf("[DEBUG] Image set count: %d (minimum required: %d)", setCount, minSets)
 	if setCount < minSets {
 		if isTest {
@@ -73,8 +114,8 @@ func (b *Bot) startVerificationInternal(chatID, userID int64, user *tgbotapi.Use
 	}
 
 	// Get random image sets for the challenge
-	log.Printf("[DEBUG] Getting %d random image sets", b.cfg.VerifyImageCount)
-	challengeSets, err := b.db.GetRandomImageSets(b.cfg.VerifyImageCount)
+	log.Printf("[DEBUG] Getting %d random image sets", questionCount)
+	challengeSets, err := b.db.GetRandomImageSets(questionCount)
 	if err != nil {
 		return fmt.Errorf("failed to get random image sets: %w", err)
 	}
@@ -162,7 +203,7 @@ func (b *Bot) startVerificationInternal(chatID, userID int64, user *tgbotapi.Use
 	// Create pending verification record
 	expiresAt := time.Now().Add(time.Duration(b.cfg.VerifyTimeoutSeconds) * time.Second)
 	log.Printf("[DEBUG] Creating pending verification, expires at: %v", expiresAt)
-	if err := b.db.CreatePendingVerification(chatID, userID, correctLabels, expiresAt); err != nil {
+	if err := b.db.CreatePendingVerification(chatID, userID, correctLabels, questionCount, expiresAt); err != nil {
 		return fmt.Errorf("failed to create pending verification: %w", err)
 	}
 
@@ -178,7 +219,7 @@ func (b *Bot) startVerificationInternal(chatID, userID int64, user *tgbotapi.Use
 	caption := b.t(user, "verify_welcome",
 		escapeHTML(userName),
 		b.cfg.VerifyTimeoutSeconds,
-		b.cfg.VerifyImageCount,
+		questionCount,
 	)
 
 	log.Printf("[DEBUG] Sending verification message to chat %d", chatID)
@@ -358,7 +399,7 @@ func (b *Bot) handleCallbackQuery(query *tgbotapi.CallbackQuery) {
 	}
 
 	// Check if all answers collected
-	if newStep >= b.cfg.VerifyImageCount {
+	if newStep >= pv.QuestionCount {
 		log.Printf("[DEBUG] All answers collected, evaluating verification")
 		b.evaluateVerification(query, pv, answers)
 		return
@@ -367,7 +408,7 @@ func (b *Bot) handleCallbackQuery(query *tgbotapi.CallbackQuery) {
 	// Update message to show next step
 	caption := b.t(query.From, "verify_step_prompt",
 		newStep,
-		b.cfg.VerifyImageCount,
+		pv.QuestionCount,
 		newStep+1,
 	)
 

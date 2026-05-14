@@ -1,6 +1,7 @@
 package bot
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"sync"
@@ -8,6 +9,7 @@ import (
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 
+	"github.com/szres/ing-recaptcha/internal/ai"
 	"github.com/szres/ing-recaptcha/internal/config"
 	"github.com/szres/ing-recaptcha/internal/database"
 	"github.com/szres/ing-recaptcha/internal/i18n"
@@ -22,6 +24,7 @@ type Bot struct {
 	cfg      *config.Config
 	composer *imaging.Composer
 	i18n     *i18n.Translator
+	ai       *ai.Client
 
 	workerPool chan struct{}
 	stopChan   chan struct{}
@@ -41,6 +44,20 @@ func New(cfg *config.Config, db *database.DB) (*Bot, error) {
 		return nil, fmt.Errorf("failed to initialize i18n: %w", err)
 	}
 
+	aiClient := ai.NewClient(cfg.ModelBaseURL, cfg.ModelAPIKey, cfg.ModelName, cfg.ModelTimeoutSeconds)
+	if aiClient.IsEnabled() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Duration(cfg.ModelTimeoutSeconds)*time.Second)
+		defer cancel()
+		if err := aiClient.HealthCheck(ctx); err != nil {
+			log.Printf("[WARN] AI health check failed, disabling AI: %v", err)
+			aiClient = ai.NewClient("", "", "", cfg.ModelTimeoutSeconds)
+		} else {
+			log.Printf("[INFO] AI client enabled (model: %s)", cfg.ModelName)
+		}
+	} else {
+		log.Printf("[INFO] AI client disabled (no MODEL_BASE_URL/MODEL_API_KEY/MODEL_NAME configured)")
+	}
+
 	return &Bot{
 		api:        rawAPI,
 		self:       rawAPI.Self,
@@ -49,6 +66,7 @@ func New(cfg *config.Config, db *database.DB) (*Bot, error) {
 		cfg:        cfg,
 		composer:   imaging.NewComposer(cfg.ImageCachePath),
 		i18n:       translator,
+		ai:         aiClient,
 		workerPool: make(chan struct{}, 5),
 		stopChan:   make(chan struct{}),
 	}, nil
@@ -83,9 +101,9 @@ func (b *Bot) Start() error {
 	go b.cleanupFailureHistory()
 
 	log.Println("Bot started, listening for updates...")
-	log.Printf("Configuration: Images=%d, Required=%d, Timeout=%ds, Distractors=%d",
+	log.Printf("Configuration: Images=%d, Required=%d, Timeout=%ds, Distractors=%d, AI=%v",
 		b.cfg.VerifyImageCount, b.cfg.VerifyRequiredCorrect,
-		b.cfg.VerifyTimeoutSeconds, b.cfg.VerifyDistractorCount)
+		b.cfg.VerifyTimeoutSeconds, b.cfg.VerifyDistractorCount, b.ai.IsEnabled())
 
 	for update := range updates {
 		go b.handleUpdate(update)

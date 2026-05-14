@@ -137,7 +137,7 @@ func TestEvaluateVerification(t *testing.T) {
 		t.Helper()
 		b, mock := newTestBot(t)
 		// VerifyRequiredCorrect is 2 (set in newTestBot)
-		err := b.db.CreatePendingVerification(chatID, userID, correctLabels, time.Now().Add(time.Minute))
+		err := b.db.CreatePendingVerification(chatID, userID, correctLabels, 3, time.Now().Add(time.Minute))
 		require.NoError(t, err)
 		return b, mock
 	}

@@ -16,11 +16,12 @@ type PendingVerification struct {
 	CurrentStep   int
 	UserAnswers   []string
 	RetryCount    int
+	QuestionCount int
 	ExpiresAt     time.Time
 	CreatedAt     time.Time
 }
 
-func (db *DB) CreatePendingVerification(chatID, userID int64, correctLabels []string, expiresAt time.Time) error {
+func (db *DB) CreatePendingVerification(chatID, userID int64, correctLabels []string, questionCount int, expiresAt time.Time) error {
 	labelsJSON, err := json.Marshal(correctLabels)
 	if err != nil {
 		return fmt.Errorf("failed to marshal correct labels: %w", err)
@@ -30,16 +31,17 @@ func (db *DB) CreatePendingVerification(chatID, userID int64, correctLabels []st
 	expiresAtUnix := expiresAt.Unix()
 
 	_, err = db.Exec(`
-		INSERT INTO pending_verifications (chat_id, user_id, correct_labels, expires_at)
-		VALUES (?, ?, ?, ?)
+		INSERT INTO pending_verifications (chat_id, user_id, correct_labels, question_count, expires_at)
+		VALUES (?, ?, ?, ?, ?)
 		ON CONFLICT(chat_id, user_id) DO UPDATE SET
 			correct_labels = excluded.correct_labels,
+			question_count = excluded.question_count,
 			current_step = 0,
 			user_answers = '[]',
 			retry_count = pending_verifications.retry_count,
 			expires_at = excluded.expires_at,
 			message_id = NULL
-	`, chatID, userID, string(labelsJSON), expiresAtUnix)
+	`, chatID, userID, string(labelsJSON), questionCount, expiresAtUnix)
 	if err != nil {
 		return fmt.Errorf("failed to create pending verification: %w", err)
 	}
@@ -63,13 +65,13 @@ func (db *DB) GetPendingVerification(chatID, userID int64) (*PendingVerification
 	var expiresAtUnix int64
 
 	err := db.QueryRow(`
-		SELECT id, chat_id, user_id, message_id, correct_labels, current_step, user_answers, retry_count, expires_at, created_at
+		SELECT id, chat_id, user_id, message_id, correct_labels, current_step, user_answers, retry_count, question_count, expires_at, created_at
 		FROM pending_verifications
 		WHERE chat_id = ? AND user_id = ?
 	`, chatID, userID).Scan(
 		&pv.ID, &pv.ChatID, &pv.UserID, &pv.MessageID,
 		&labelsJSON, &pv.CurrentStep, &answersJSON,
-		&pv.RetryCount, &expiresAtUnix, &pv.CreatedAt,
+		&pv.RetryCount, &pv.QuestionCount, &expiresAtUnix, &pv.CreatedAt,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -155,7 +157,7 @@ func (db *DB) GetExpiredVerifications() ([]*PendingVerification, error) {
 	nowUnix := time.Now().Unix()
 
 	rows, err := db.Query(`
-		SELECT id, chat_id, user_id, message_id, correct_labels, current_step, user_answers, retry_count, expires_at, created_at
+		SELECT id, chat_id, user_id, message_id, correct_labels, current_step, user_answers, retry_count, question_count, expires_at, created_at
 		FROM pending_verifications
 		WHERE expires_at < ?
 	`, nowUnix)
@@ -173,7 +175,7 @@ func (db *DB) GetExpiredVerifications() ([]*PendingVerification, error) {
 		if err := rows.Scan(
 			&pv.ID, &pv.ChatID, &pv.UserID, &pv.MessageID,
 			&labelsJSON, &pv.CurrentStep, &answersJSON,
-			&pv.RetryCount, &expiresAtUnix, &pv.CreatedAt,
+			&pv.RetryCount, &pv.QuestionCount, &expiresAtUnix, &pv.CreatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan verification: %w", err)
 		}

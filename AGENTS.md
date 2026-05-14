@@ -10,6 +10,7 @@ A Telegram bot for Ingress-themed group verification. New members must pass an i
 - **Database:** SQLite via `go-sqlite3`, WAL mode, in-process migrations
 - **Telegram API:** `go-telegram-bot-api/telegram-bot-api/v5`
 - **Image processing:** `disintegration/imaging`
+- **AI client:** OpenAI-compatible API client (`internal/ai/`) for dynamic verification difficulty
 - **Testing:** `testify` (assert + require), in-memory SQLite (`:memory:`)
 - **i18n:** Embedded JSON locale files (`internal/i18n/locales/`)
 - **Deployment:** Docker (multi-stage build), docker-compose
@@ -19,6 +20,7 @@ A Telegram bot for Ingress-themed group verification. New members must pass an i
 ```
 cmd/bot/                    # Application entrypoint (main.go)
 internal/
+  ai/                       # OpenAI-compatible AI client for risk assessment
   bot/                      # Telegram bot core: handlers, verification flow, admin commands, i18n bridge
   config/                   # Environment-based config loading
   database/                 # SQLite DB layer: models, queries, inline migrations
@@ -94,6 +96,14 @@ cp .env.example .env
 - All config via environment variables, loaded in `internal/config/config.go`
 - Every env var has a sensible default except `TELEGRAM_BOT_TOKEN`
 
+### AI Client
+- `internal/ai/` provides an OpenAI-compatible API client for risk-based verification difficulty
+- The client targets `/v1/chat/completions` and is compatible with OpenAI, DeepSeek, Ollama, etc.
+- AI is optional: when `MODEL_BASE_URL`/`MODEL_API_KEY`/`MODEL_NAME` are not set, the bot falls back to fixed `VerifyImageCount`
+- Failed health check at startup disables AI gracefully (bot starts normally)
+- Failed `AssessRisk` at runtime falls back to `VerifyImageCount` with a warning log
+- The AI client uses `context.WithTimeout` for all API calls (configurable via `MODEL_TIMEOUT_SECONDS`)
+
 ## Testing Guidelines
 
 - Tests live alongside source files (`*_test.go`)
@@ -110,7 +120,7 @@ cp .env.example .env
 | `image_sets` | Named categories of verification images |
 | `images` | Individual images belonging to a set (Telegram file_id + local cache path) |
 | `image_set_labels` | Multilingual labels for image sets |
-| `pending_verifications` | Active verification sessions (per chat+user, UPSERT on conflict) |
+| `pending_verifications` | Active verification sessions (per chat+user, UPSERT on conflict, includes `question_count` for AI-based difficulty) |
 | `verification_failures` | Tracks failure count for two-strike kick/ban logic |
 | `user_join_history` | Anti-spam: recent join timestamps |
 | `user_language_preferences` | Per-user language override |

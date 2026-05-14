@@ -15,7 +15,7 @@ func TestCreatePendingVerification_CreateAndRetrieve(t *testing.T) {
 	db := newTestDB(t)
 	expiresAt := time.Now().Add(5 * time.Minute).Truncate(time.Second)
 
-	err := db.CreatePendingVerification(100, 200, []string{"cat", "dog"}, expiresAt)
+	err := db.CreatePendingVerification(100, 200, []string{"cat", "dog"}, 3, expiresAt)
 	require.NoError(t, err)
 
 	pv, err := db.GetPendingVerification(100, 200)
@@ -35,7 +35,7 @@ func TestCreatePendingVerification_UpsertResetsStepAndAnswers(t *testing.T) {
 	db := newTestDB(t)
 	expiresAt := time.Now().Add(5 * time.Minute).Truncate(time.Second)
 
-	require.NoError(t, db.CreatePendingVerification(100, 200, []string{"cat"}, expiresAt))
+	require.NoError(t, db.CreatePendingVerification(100, 200, []string{"cat"}, 3, expiresAt))
 
 	// Advance step and answers, then increment retry count
 	require.NoError(t, db.UpdateVerificationStep(100, 200, 2, []string{"cat"}))
@@ -44,7 +44,7 @@ func TestCreatePendingVerification_UpsertResetsStepAndAnswers(t *testing.T) {
 
 	// Upsert with new labels
 	newExpires := time.Now().Add(10 * time.Minute).Truncate(time.Second)
-	require.NoError(t, db.CreatePendingVerification(100, 200, []string{"bird"}, newExpires))
+	require.NoError(t, db.CreatePendingVerification(100, 200, []string{"bird"}, 3, newExpires))
 
 	pv, err := db.GetPendingVerification(100, 200)
 	require.NoError(t, err)
@@ -69,7 +69,7 @@ func TestGetPendingVerification_JSONDeserialization(t *testing.T) {
 	labels := []string{"alpha", "beta", "gamma"}
 	expiresAt := time.Now().Add(time.Minute).Truncate(time.Second)
 
-	require.NoError(t, db.CreatePendingVerification(1, 2, labels, expiresAt))
+	require.NoError(t, db.CreatePendingVerification(1, 2, labels, 3, expiresAt))
 	require.NoError(t, db.UpdateVerificationStep(1, 2, 1, []string{"alpha"}))
 
 	pv, err := db.GetPendingVerification(1, 2)
@@ -85,7 +85,7 @@ func TestGetPendingVerification_ExpiresAtUnixRoundTrip(t *testing.T) {
 	// Truncate to second precision since we store as UNIX timestamp
 	expiresAt := time.Now().Add(30 * time.Minute).Truncate(time.Second)
 
-	require.NoError(t, db.CreatePendingVerification(10, 20, []string{"x"}, expiresAt))
+	require.NoError(t, db.CreatePendingVerification(10, 20, []string{"x"}, 3, expiresAt))
 
 	pv, err := db.GetPendingVerification(10, 20)
 	require.NoError(t, err)
@@ -99,7 +99,7 @@ func TestGetPendingVerification_ExpiresAtUnixRoundTrip(t *testing.T) {
 func TestUpdateVerificationMessageID(t *testing.T) {
 	db := newTestDB(t)
 	expiresAt := time.Now().Add(time.Minute)
-	require.NoError(t, db.CreatePendingVerification(1, 1, []string{"a"}, expiresAt))
+	require.NoError(t, db.CreatePendingVerification(1, 1, []string{"a"}, 3, expiresAt))
 
 	require.NoError(t, db.UpdateVerificationMessageID(1, 1, 42))
 
@@ -115,7 +115,7 @@ func TestUpdateVerificationMessageID(t *testing.T) {
 func TestUpdateVerificationStep(t *testing.T) {
 	db := newTestDB(t)
 	expiresAt := time.Now().Add(time.Minute)
-	require.NoError(t, db.CreatePendingVerification(1, 1, []string{"a", "b"}, expiresAt))
+	require.NoError(t, db.CreatePendingVerification(1, 1, []string{"a", "b"}, 3, expiresAt))
 
 	require.NoError(t, db.UpdateVerificationStep(1, 1, 1, []string{"a"}))
 
@@ -131,7 +131,7 @@ func TestUpdateVerificationStep(t *testing.T) {
 func TestIncrementRetryCount(t *testing.T) {
 	db := newTestDB(t)
 	expiresAt := time.Now().Add(time.Minute)
-	require.NoError(t, db.CreatePendingVerification(1, 1, []string{"a"}, expiresAt))
+	require.NoError(t, db.CreatePendingVerification(1, 1, []string{"a"}, 3, expiresAt))
 
 	count, err := db.IncrementRetryCount(1, 1)
 	require.NoError(t, err)
@@ -154,7 +154,7 @@ func TestIncrementRetryCount(t *testing.T) {
 func TestDeletePendingVerification_Deletes(t *testing.T) {
 	db := newTestDB(t)
 	expiresAt := time.Now().Add(time.Minute)
-	require.NoError(t, db.CreatePendingVerification(1, 1, []string{"a"}, expiresAt))
+	require.NoError(t, db.CreatePendingVerification(1, 1, []string{"a"}, 3, expiresAt))
 
 	require.NoError(t, db.DeletePendingVerification(1, 1))
 
@@ -174,7 +174,7 @@ func TestDeletePendingVerification_NoOpOnMissing(t *testing.T) {
 func TestClaimPendingVerification_ReturnsTrueAndDeletes(t *testing.T) {
 	db := newTestDB(t)
 	expiresAt := time.Now().Add(time.Minute).Truncate(time.Second)
-	require.NoError(t, db.CreatePendingVerification(1, 1, []string{"a"}, expiresAt))
+	require.NoError(t, db.CreatePendingVerification(1, 1, []string{"a"}, 3, expiresAt))
 
 	claimed, err := db.ClaimPendingVerification(1, 1, expiresAt)
 	require.NoError(t, err)
@@ -188,7 +188,7 @@ func TestClaimPendingVerification_ReturnsTrueAndDeletes(t *testing.T) {
 func TestClaimPendingVerification_FalseWhenMismatched(t *testing.T) {
 	db := newTestDB(t)
 	expiresAt := time.Now().Add(time.Minute).Truncate(time.Second)
-	require.NoError(t, db.CreatePendingVerification(1, 1, []string{"a"}, expiresAt))
+	require.NoError(t, db.CreatePendingVerification(1, 1, []string{"a"}, 3, expiresAt))
 
 	wrongExpires := expiresAt.Add(time.Second)
 	claimed, err := db.ClaimPendingVerification(1, 1, wrongExpires)
@@ -211,8 +211,8 @@ func TestGetExpiredVerifications_ReturnsExpiredSkipsFuture(t *testing.T) {
 	pastExpires := time.Now().Add(-1 * time.Second).Truncate(time.Second)
 	futureExpires := time.Now().Add(1 * time.Hour).Truncate(time.Second)
 
-	require.NoError(t, db.CreatePendingVerification(1, 1, []string{"a"}, pastExpires))
-	require.NoError(t, db.CreatePendingVerification(1, 2, []string{"b"}, futureExpires))
+	require.NoError(t, db.CreatePendingVerification(1, 1, []string{"a"}, 3, pastExpires))
+	require.NoError(t, db.CreatePendingVerification(1, 2, []string{"b"}, 3, futureExpires))
 
 	expired, err := db.GetExpiredVerifications()
 	require.NoError(t, err)

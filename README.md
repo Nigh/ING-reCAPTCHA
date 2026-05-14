@@ -22,6 +22,7 @@
 
 - 新成员自动触发验证
 - 图片识别验证（从预设图片集中随机选择）
+- AI 智能评估用户风险，动态调整验证难度（3–7 题）
 - 防 Hash 扫描的图片合成
 - 可配置的验证参数
 - 防刷机制（重复加入冷却）
@@ -108,11 +109,15 @@ go build -o bot ./cmd/bot
 | `BOT_ADMIN_IDS` | 推荐 | - | Bot 管理员 ID，逗号分隔 |
 | `DATABASE_PATH` | ❌ | `/data/bot.db` | SQLite 数据库路径 |
 | `IMAGE_CACHE_PATH` | ❌ | `/images` | 图片缓存目录 |
-| `VERIFY_IMAGE_COUNT` | ❌ | `3` | 验证时显示的图片数量 |
+| `VERIFY_IMAGE_COUNT` | ❌ | `3` | 验证时显示的图片数量（未启用 AI 时的默认值） |
 | `VERIFY_REQUIRED_CORRECT` | ❌ | `2` | 需要答对的数量 |
 | `VERIFY_TIMEOUT_SECONDS` | ❌ | `120` | 验证超时时间（秒） |
 | `VERIFY_MAX_RETRY` | ❌ | `1` | 最大重试次数 |
 | `REJOIN_COOLDOWN_SECONDS` | ❌ | `300` | 重新加入冷却时间（秒） |
+| `MODEL_BASE_URL` | ❌ | - | AI 模型 API 地址（启用 AI 时必填） |
+| `MODEL_API_KEY` | ❌ | - | AI 模型 API Key（启用 AI 时必填） |
+| `MODEL_NAME` | ❌ | - | AI 模型名称（启用 AI 时必填） |
+| `MODEL_TIMEOUT_SECONDS` | ❌ | `5` | AI 请求超时时间（秒） |
 
 ### 验证参数说明
 
@@ -121,6 +126,31 @@ go build -o bot ./cmd/bot
 - **选项数量**：9 个选项（3 个正确 + 6 个干扰）
 - **超时时间**：120 秒内未完成验证将被踢出
 - **重试次数**：失败后可重试 1 次
+
+### AI 动态验证难度（可选）
+
+启用 AI 后，Bot 会根据用户风险评估自动调整验证题目数量（3–7 题）。评估依据包括用户名模式、语言代码、是否为 Bot 等因素。
+
+**启用方式**：配置 `MODEL_BASE_URL`、`MODEL_API_KEY`、`MODEL_NAME` 三个环境变量即可。兼容所有 OpenAI 格式的 API（OpenAI、DeepSeek、Ollama 等）。
+
+**降级策略**：
+- 未配置 AI 相关环境变量时，使用固定的 `VERIFY_IMAGE_COUNT`
+- AI 服务不可达时（启动健康检查失败），自动禁用 AI 并降级
+- 运行时 AI 请求失败，回退到 `VERIFY_IMAGE_COUNT`
+
+```env
+# 示例：使用 DeepSeek API
+MODEL_BASE_URL=https://api.deepseek.com
+MODEL_API_KEY=sk-xxxxxxxx
+MODEL_NAME=deepseek-chat
+MODEL_TIMEOUT_SECONDS=5
+
+# 示例：使用本地 Ollama
+MODEL_BASE_URL=http://localhost:11434
+MODEL_API_KEY=ollama
+MODEL_NAME=llama3
+MODEL_TIMEOUT_SECONDS=10
+```
 
 ---
 
@@ -267,13 +297,14 @@ BOT_ADMIN_IDS=123456789,987654321
 
 1. 用户加入群组
 2. 立即被限制发言权限
-3. 收到验证消息，显示 3 张合成图片
-4. 依次为图片 1、2、3 选择正确的标签
-5. 答对 2 个以上：验证通过，恢复权限
-6. 答错：
+3. Bot 通过 AI 评估用户风险，确定验证题目数量（3–7 题）
+4. 收到验证消息，显示合成图片
+5. 依次为每张图片选择正确的标签
+6. 答对 2 个以上：验证通过，恢复权限
+7. 答错：
    - 首次失败：重新生成验证
    - 再次失败：被踢出群组
-7. 超时未完成：被踢出群组
+8. 超时未完成：被踢出群组
 
 ### 验证消息示例
 
@@ -370,6 +401,17 @@ Docker 部署时，以下目录会被挂载：
 ```
 
 或使用 [@userinfobot](https://t.me/userinfobot)
+
+### AI 功能相关
+
+**日志中出现 "AI health check failed"**
+- 检查 `MODEL_BASE_URL` 是否可访问
+- 检查 `MODEL_API_KEY` 是否有效
+- Bot 会自动禁用 AI 并继续运行（使用固定验证数量）
+
+**日志中出现 "AI risk assessment failed"**
+- AI 请求超时或返回错误，Bot 自动降级为固定数量
+- 可尝试增大 `MODEL_TIMEOUT_SECONDS`
 
 ---
 

@@ -19,6 +19,11 @@ type Config struct {
 	RejoinCooldownSeconds int
 	DefaultLanguage       string
 	InitialAdminIDs       []int64
+
+	ModelBaseURL        string
+	ModelAPIKey         string
+	ModelName           string
+	ModelTimeoutSeconds int
 }
 
 func Load() *Config {
@@ -34,6 +39,11 @@ func Load() *Config {
 		RejoinCooldownSeconds: getEnvInt("REJOIN_COOLDOWN_SECONDS", 300),
 		DefaultLanguage:       getEnv("DEFAULT_LANGUAGE", "zh"),
 		InitialAdminIDs:       getEnvInt64List("BOT_ADMIN_IDS"),
+
+		ModelBaseURL:        getEnv("MODEL_BASE_URL", ""),
+		ModelAPIKey:         getEnv("MODEL_API_KEY", ""),
+		ModelName:           getEnv("MODEL_NAME", ""),
+		ModelTimeoutSeconds: getEnvInt("MODEL_TIMEOUT_SECONDS", 5),
 	}
 }
 
