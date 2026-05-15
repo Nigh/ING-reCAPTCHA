@@ -255,6 +255,7 @@ func TestBuildUserPrompt(t *testing.T) {
 	assert.Contains(t, prompt, "Doe")
 	assert.Contains(t, prompt, "en")
 	assert.Contains(t, prompt, "no")
+	assert.Contains(t, prompt, "Has profile photo: no")
 }
 
 func TestBuildUserPromptEmptyFields(t *testing.T) {
@@ -265,4 +266,116 @@ func TestBuildUserPromptEmptyFields(t *testing.T) {
 	prompt := buildUserPrompt(info)
 	assert.Contains(t, prompt, "(none)")
 	assert.Contains(t, prompt, "(unknown)")
+}
+
+func TestBuildUserPromptWithPhoto(t *testing.T) {
+	info := &UserInfo{
+		UserID:           42,
+		Username:         "johndoe",
+		FirstName:        "John",
+		LanguageCode:     "en",
+		ProfilePhotoData: []byte("fake-photo-data"),
+	}
+	prompt := buildUserPrompt(info)
+	assert.Contains(t, prompt, "Has profile photo: yes (see attached image)")
+}
+
+func TestBuildSystemPrompt(t *testing.T) {
+	t.Run("without photo", func(t *testing.T) {
+		prompt := buildSystemPrompt(false)
+		assert.Contains(t, prompt, "no profile photo")
+		assert.NotContains(t, prompt, "Profile photo analysis")
+	})
+
+	t.Run("with photo", func(t *testing.T) {
+		prompt := buildSystemPrompt(true)
+		assert.Contains(t, prompt, "Profile photo analysis")
+		assert.NotContains(t, prompt, "no profile photo")
+	})
+}
+
+func TestAssessRiskWithPhoto(t *testing.T) {
+	t.Run("sends multimodal content when photo provided", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			var req chatRequest
+			json.NewDecoder(r.Body).Decode(&req)
+			assert.Len(t, req.Messages, 2)
+
+			userMsg := req.Messages[1]
+			content, ok := userMsg.Content.([]interface{})
+			require.True(t, ok, "expected content to be an array for multimodal")
+			assert.Len(t, content, 2)
+
+			textPart, ok := content[0].(map[string]interface{})
+			require.True(t, ok)
+			assert.Equal(t, "text", textPart["type"])
+
+			imgPart, ok := content[1].(map[string]interface{})
+			require.True(t, ok)
+			assert.Equal(t, "image_url", imgPart["type"])
+			imgURL, ok := imgPart["image_url"].(map[string]interface{})
+			require.True(t, ok)
+			assert.Contains(t, imgURL["url"], "data:image/jpeg;base64,")
+
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(chatResponse{
+				Choices: []struct {
+					Message struct {
+						Content string `json:"content"`
+					} `json:"message"`
+				}{{Message: struct {
+					Content string `json:"content"`
+				}{Content: `{"question_count": 6}`}}},
+			})
+		}))
+		defer server.Close()
+
+		c := NewClient(server.URL, "test-key", "test-model", 5)
+		info := &UserInfo{
+			UserID:           12345,
+			Username:         "testuser",
+			FirstName:        "Test",
+			ProfilePhotoData: []byte("fake-photo-bytes"),
+		}
+
+		n, err := c.AssessRisk(context.Background(), info)
+		require.NoError(t, err)
+		assert.Equal(t, 6, n)
+	})
+
+	t.Run("sends text-only content when no photo", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			var req chatRequest
+			json.NewDecoder(r.Body).Decode(&req)
+			assert.Len(t, req.Messages, 2)
+
+			userMsg := req.Messages[1]
+			_, isString := userMsg.Content.(string)
+			assert.True(t, isString, "expected content to be a string for text-only")
+
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(chatResponse{
+				Choices: []struct {
+					Message struct {
+						Content string `json:"content"`
+					} `json:"message"`
+				}{{Message: struct {
+					Content string `json:"content"`
+				}{Content: `{"question_count": 3}`}}},
+			})
+		}))
+		defer server.Close()
+
+		c := NewClient(server.URL, "test-key", "test-model", 5)
+		info := &UserInfo{
+			UserID:       12345,
+			Username:     "testuser",
+			FirstName:    "Test",
+			LanguageCode: "en",
+		}
+
+		n, err := c.AssessRisk(context.Background(), info)
+		require.NoError(t, err)
+		assert.Equal(t, 3, n)
+	})
 }

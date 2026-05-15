@@ -2,6 +2,7 @@ package bot
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -70,6 +71,10 @@ func (b *Bot) startVerificationInternal(chatID, userID int64, user *tgbotapi.Use
 			LastName:     user.LastName,
 			LanguageCode: user.LanguageCode,
 			IsBot:        user.IsBot,
+		}
+
+		if photoData := b.fetchUserProfilePhoto(user.ID); len(photoData) > 0 {
+			userInfo.ProfilePhotoData = photoData
 		}
 
 		if count, err := b.ai.AssessRisk(aiCtx, userInfo); err != nil {
@@ -739,4 +744,58 @@ func (b *Bot) downloadAndCacheImage(fileID string, imageID int64) (string, error
 // OptionsData stores the shuffled options for a verification session
 type OptionsData struct {
 	Options []string `json:"options"`
+}
+
+func (b *Bot) fetchUserProfilePhoto(userID int64) []byte {
+	config := tgbotapi.UserProfilePhotosConfig{
+		UserID: userID,
+		Limit:  1,
+	}
+
+	resp, err := b.api.Request(config)
+	if err != nil {
+		log.Printf("[DEBUG] Failed to get profile photos for user %d: %v", userID, err)
+		return nil
+	}
+	if resp == nil || len(resp.Result) == 0 {
+		log.Printf("[DEBUG] No profile photo response for user %d", userID)
+		return nil
+	}
+
+	var photos tgbotapi.UserProfilePhotos
+	if err := json.Unmarshal(resp.Result, &photos); err != nil {
+		log.Printf("[DEBUG] Failed to parse profile photos for user %d: %v", userID, err)
+		return nil
+	}
+	if photos.TotalCount == 0 || len(photos.Photos) == 0 || len(photos.Photos[0]) == 0 {
+		log.Printf("[DEBUG] User %d has no profile photos", userID)
+		return nil
+	}
+
+	// Get the largest size (last element in the size array)
+	photoSizes := photos.Photos[0]
+	photo := photoSizes[len(photoSizes)-1]
+
+	file, err := b.api.GetFile(tgbotapi.FileConfig{FileID: photo.FileID})
+	if err != nil {
+		log.Printf("[DEBUG] Failed to get file info for user %d photo: %v", userID, err)
+		return nil
+	}
+
+	fileURL := file.Link(b.token)
+	httpResp, err := httpClient.Get(fileURL)
+	if err != nil {
+		log.Printf("[DEBUG] Failed to download profile photo for user %d: %v", userID, err)
+		return nil
+	}
+	defer httpResp.Body.Close()
+
+	data, err := io.ReadAll(httpResp.Body)
+	if err != nil {
+		log.Printf("[DEBUG] Failed to read profile photo data for user %d: %v", userID, err)
+		return nil
+	}
+
+	log.Printf("[DEBUG] Fetched profile photo for user %d (%d bytes)", userID, len(data))
+	return data
 }

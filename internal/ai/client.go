@@ -3,6 +3,7 @@ package ai
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -49,8 +50,18 @@ type chatRequest struct {
 }
 
 type chatMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role    string      `json:"role"`
+	Content interface{} `json:"content"`
+}
+
+type contentPart struct {
+	Type     string    `json:"type"`
+	Text     string    `json:"text,omitempty"`
+	ImageURL *imageURL `json:"image_url,omitempty"`
+}
+
+type imageURL struct {
+	URL string `json:"url"`
 }
 
 type chatResponse struct {
@@ -81,12 +92,22 @@ func (c *Client) AssessRisk(ctx context.Context, userInfo *UserInfo) (int, error
 		return 0, fmt.Errorf("AI client is not enabled")
 	}
 
-	systemMsg := buildSystemPrompt()
+	hasPhoto := len(userInfo.ProfilePhotoData) > 0
+	systemMsg := buildSystemPrompt(hasPhoto)
 	userMsg := buildUserPrompt(userInfo)
+
+	var userContent interface{} = userMsg
+	if hasPhoto {
+		encoded := base64.StdEncoding.EncodeToString(userInfo.ProfilePhotoData)
+		userContent = []contentPart{
+			{Type: "text", Text: userMsg},
+			{Type: "image_url", ImageURL: &imageURL{URL: "data:image/jpeg;base64," + encoded}},
+		}
+	}
 
 	req := chatRequest{
 		Model:       c.modelName,
-		Messages:    []chatMessage{{Role: "system", Content: systemMsg}, {Role: "user", Content: userMsg}},
+		Messages:    []chatMessage{{Role: "system", Content: systemMsg}, {Role: "user", Content: userContent}},
 		Temperature: 0.3,
 		MaxTokens:   100,
 	}
