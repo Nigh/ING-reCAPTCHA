@@ -142,6 +142,11 @@ DELETE FROM pending_verifications WHERE CAST(expires_at AS TEXT) LIKE '%-%';
 		}
 	}
 
+	// Backfill existing rows: ALTER TABLE ADD COLUMN with DEFAULT does not populate pre-existing rows in SQLite
+	if _, err := db.Exec("UPDATE pending_verifications SET question_count = 3 WHERE question_count IS NULL"); err != nil {
+		return fmt.Errorf("failed to backfill question_count: %w", err)
+	}
+
 	return nil
 }
 

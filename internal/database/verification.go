@@ -65,7 +65,7 @@ func (db *DB) GetPendingVerification(chatID, userID int64) (*PendingVerification
 	var expiresAtUnix int64
 
 	err := db.QueryRow(`
-		SELECT id, chat_id, user_id, message_id, correct_labels, current_step, user_answers, retry_count, question_count, expires_at, created_at
+		SELECT id, chat_id, user_id, message_id, correct_labels, current_step, user_answers, retry_count, COALESCE(question_count, 3), expires_at, created_at
 		FROM pending_verifications
 		WHERE chat_id = ? AND user_id = ?
 	`, chatID, userID).Scan(
@@ -157,7 +157,7 @@ func (db *DB) GetExpiredVerifications() ([]*PendingVerification, error) {
 	nowUnix := time.Now().Unix()
 
 	rows, err := db.Query(`
-		SELECT id, chat_id, user_id, message_id, correct_labels, current_step, user_answers, retry_count, question_count, expires_at, created_at
+		SELECT id, chat_id, user_id, message_id, correct_labels, current_step, user_answers, retry_count, COALESCE(question_count, 3), expires_at, created_at
 		FROM pending_verifications
 		WHERE expires_at < ?
 	`, nowUnix)
